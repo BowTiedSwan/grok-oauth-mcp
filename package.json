@@ -1,0 +1,47 @@
+{
+  "name": "grok-oauth-mcp",
+  "version": "0.1.0",
+  "description": "Standalone MCP stdio server for xAI Grok using web OAuth PKCE",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "grok-oauth-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "xai",
+    "grok",
+    "oauth",
+    "claude-desktop"
+  ],
+  "author": "BowTiedSwan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bowtieswan/grok-oauth-mcp.git"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
