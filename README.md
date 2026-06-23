@@ -22,7 +22,13 @@ No `XAI_API_KEY` is used for the normal OAuth path. xAI may still gate OAuth API
 - MCP stdio tools for auth, Grok chat, X search, image, video, TTS, and transcription.
 - Multipart upload support for local image/audio paths.
 
-## Install And Build
+## Quick Start
+
+This is the shortest path for a human or agent to get the MCP running, authenticate, and verify that Grok works.
+
+### 1. Install
+
+From source:
 
 ```bash
 git clone https://github.com/bowtieswan/grok-oauth-mcp.git
@@ -31,61 +37,120 @@ npm install
 npm run build
 ```
 
-Run locally:
+Run directly from the built checkout:
 
 ```bash
-npm start
+node /absolute/path/to/grok-oauth-mcp/dist/index.js
 ```
 
-During development:
+Or install it globally from the checkout:
 
 ```bash
-npm run dev
+npm install -g .
+grok-oauth-mcp
 ```
 
-After publishing, the intended one-shot package form is:
+Package-runner form:
 
 ```bash
 npx grok-oauth-mcp
 ```
 
-## Claude Desktop Config
+### 2. Add It To Your MCP Client
 
-Add an MCP server entry that points at your local build:
+Use absolute paths when possible. This avoids PATH differences between your shell and GUI apps.
+
+#### Claude Desktop
+
+Add an MCP server entry that points at your local build or global executable. Local build example:
 
 ```json
 {
   "mcpServers": {
     "grok-oauth": {
       "command": "node",
-      "args": ["/path/to/grok-oauth-mcp/dist/index.js"],
-      "env": {
-        "GROK_OAUTH_MCP_CONFIG_DIR": "/path/to/config-dir"
-      }
+      "args": ["/absolute/path/to/grok-oauth-mcp/dist/index.js"]
     }
   }
 }
 ```
 
-If you use the default token directory, omit `env`.
+If you installed globally and know the executable path:
 
-## OAuth Login
-
-Use the `auth_login` MCP tool. The tool returns an `auth_url` and starts a temporary local callback listener at:
-
-```text
-http://127.0.0.1:56121/callback
+```json
+{
+  "mcpServers": {
+    "grok-oauth": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/grok-oauth-mcp"]
+    }
+  }
+}
 ```
 
-Open the returned `auth_url` in a browser, sign in to xAI, and allow the browser redirect to the local callback URL. The pending PKCE verifier is also stored temporarily so the login can be completed manually if xAI shows a Grok Build code instead of redirecting. Tokens are written to:
+#### OpenCode
 
-```text
-~/.config/grok-oauth-mcp/tokens.json
+Add a local MCP server entry under the top-level `mcp` object in your OpenCode config, usually `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "grok-oauth": {
+      "command": [
+        "/absolute/path/to/node",
+        "/absolute/path/to/grok-oauth-mcp"
+      ],
+      "enabled": true,
+      "type": "local"
+    }
+  }
+}
 ```
 
-The token file and temporary pending OAuth file are written with mode `0600` where the local filesystem supports POSIX permissions.
+Then restart the MCP client or reload MCP servers. In OpenCode, verify discovery with:
 
-If xAI shows a page that says "Enter this code to finish signing in" / "Copy the code below into Grok Build", copy that code and call `auth_exchange_code`:
+```bash
+opencode mcp list
+```
+
+You should see `grok-oauth` connected.
+
+### 3. Authenticate
+
+Use the MCP tool `auth_login` with `wait=false` first. This is the safest mode for most MCP clients because the tool returns the URL immediately.
+
+Input:
+
+```json
+{
+  "wait": false,
+  "timeout_ms": 600000
+}
+```
+
+The result contains:
+
+- `auth_url`: open this in your browser.
+- `state`: the OAuth state for this attempt.
+- `redirect_uri`: normally `http://127.0.0.1:56121/callback`.
+- `token_path`: where tokens will be written after success.
+
+Open `auth_url`, sign in to xAI, then complete one of these two paths.
+
+#### Path A: Browser Redirects To Localhost
+
+If the browser redirects to `http://127.0.0.1:56121/callback?...` and shows a success message, login is complete. Run `auth_status` to confirm.
+
+#### Path B: xAI Shows A Grok Build Code
+
+Sometimes xAI shows a page saying:
+
+```text
+Enter this code to finish signing in
+Copy the code below into Grok Build to finish signing in
+```
+
+If that happens, copy the code and call `auth_exchange_code` immediately:
 
 ```json
 {
@@ -93,7 +158,9 @@ If xAI shows a page that says "Enter this code to finish signing in" / "Copy the
 }
 ```
 
-If you have a full callback URL instead, pass it as `callback_url`:
+The code is tied to the most recent `auth_login` attempt and the saved PKCE verifier. If it expires or you started another login attempt, run `auth_login` again and use the fresh code from the fresh URL.
+
+If you have a full callback URL instead of a bare code, pass it as `callback_url`:
 
 ```json
 {
@@ -101,9 +168,40 @@ If you have a full callback URL instead, pass it as `callback_url`:
 }
 ```
 
-Run `auth_login` again if the pending OAuth state is missing or expired.
+### 4. Verify Auth
 
-OAuth details:
+Run `auth_status`. A successful login returns `authenticated: true`, `has_refresh_token: true`, and an expiry time. Token values are never returned.
+
+Tokens are stored at:
+
+```text
+~/.config/grok-oauth-mcp/tokens.json
+```
+
+Temporary pending OAuth state is stored at:
+
+```text
+~/.config/grok-oauth-mcp/pending_oauth.json
+```
+
+Both files are written with mode `0600` where the local filesystem supports POSIX permissions.
+
+### 5. Test Grok
+
+After `auth_status` is authenticated, try a small call. For X search:
+
+```json
+{
+  "query": "latest xAI Grok updates",
+  "filters": {
+    "max_results": 5
+  }
+}
+```
+
+If the first broad search times out, retry with a narrower query and fewer results.
+
+## OAuth Details
 
 - Discovery: `https://auth.x.ai/.well-known/openid-configuration`
 - Displayed authorization server: `accounts.x.ai`
@@ -111,6 +209,14 @@ OAuth details:
 - Scope: `openid profile email offline_access grok-cli:access api:access`
 - Redirect URI: `http://127.0.0.1:56121/callback`
 - Authorize URL includes `plan=generic` and `referrer=hermes-agent`.
+
+## Authentication Notes For Agents
+
+- Prefer `auth_login` with `wait=false`. Do not use `wait=true` unless your MCP host surfaces stderr or tool output while the call is still running.
+- Always open the exact `auth_url` from the latest `auth_login` result.
+- If the page shows a Grok Build code, call `auth_exchange_code` with that code. Do not try to open `/callback` manually.
+- If `auth_exchange_code` returns `No pending OAuth login found` or `Pending OAuth login is expired`, run `auth_login` again and use the fresh URL/code.
+- If xAI returns `invalid_grant`, the code is stale, already used, or from a different login attempt. Run `auth_login` again.
 
 ## Tools
 
@@ -155,7 +261,7 @@ Reports whether a token is stored, whether a refresh token exists, and approxima
 
 ### `auth_logout`
 
-Deletes the local token file.
+Deletes the local token file and any pending OAuth state.
 
 ### `grok_chat`
 
@@ -235,8 +341,10 @@ Example:
 
 ## Troubleshooting
 
-- `Not authenticated. Run auth_login first.`: Run `auth_login`, open the returned URL, and complete the local callback.
-- Browser cannot reach callback: Make sure nothing else is using port `56121`, then run `auth_login` again.
+- `Not authenticated. Run auth_login first.`: Run `auth_login` with `wait=false`, open the returned `auth_url`, then complete the redirect or use `auth_exchange_code` with the Grok Build code.
+- Browser cannot reach callback: If xAI showed a Grok Build code, do not manually open `/callback`; call `auth_exchange_code` with the code instead. If you expected a redirect, make sure nothing else is using port `56121`, then run `auth_login` again.
+- `No pending OAuth login found` or `Pending OAuth login is expired`: Run `auth_login` again and use the fresh URL/code.
+- `invalid_grant`: The pasted code is stale, already used, or belongs to a different login attempt. Run `auth_login` again and paste the fresh code.
 - `403` from xAI: Your xAI account may not have the required SuperGrok or X Premium+ entitlement for the requested Grok API surface.
 - Token refresh fails: Run `auth_logout`, then `auth_login` again.
 - Custom API gateway or mock server: Set `XAI_BASE_URL` to the replacement base URL.
