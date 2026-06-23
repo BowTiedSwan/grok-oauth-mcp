@@ -4,6 +4,14 @@ Standalone TypeScript stdio MCP server for xAI Grok using web OAuth PKCE. It is 
 
 This server does not require `XAI_API_KEY` for normal usage. The primary auth path is xAI web OAuth with a local token store.
 
+## Requirements
+
+- Node.js 20+
+- A local MCP client that can launch stdio servers, such as Claude Desktop or another MCP-compatible host.
+- An xAI account with an active **SuperGrok** subscription or an **X Premium+** subscription linked to the X account you sign in with. This matches the Hermes xAI Grok OAuth connector: the browser login works through `accounts.x.ai`, and xAI links X Premium+ entitlement to the xAI session automatically.
+
+No `XAI_API_KEY` is used for the normal OAuth path. xAI may still gate OAuth API access by subscription tier; if OAuth succeeds but xAI API calls return `403`, your account may not be entitled for that OAuth API surface yet.
+
 ## Features
 
 - xAI web OAuth PKCE login with the Hermes client ID.
