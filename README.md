@@ -77,13 +77,31 @@ Use the `auth_login` MCP tool. The tool returns an `auth_url` and starts a tempo
 http://127.0.0.1:56121/callback
 ```
 
-Open the returned `auth_url` in a browser, sign in to xAI, and allow the browser redirect to the local callback URL. Tokens are written to:
+Open the returned `auth_url` in a browser, sign in to xAI, and allow the browser redirect to the local callback URL. The pending PKCE verifier is also stored temporarily so the login can be completed manually if xAI shows a Grok Build code instead of redirecting. Tokens are written to:
 
 ```text
 ~/.config/grok-oauth-mcp/tokens.json
 ```
 
-The token file is written with mode `0600` where the local filesystem supports POSIX permissions.
+The token file and temporary pending OAuth file are written with mode `0600` where the local filesystem supports POSIX permissions.
+
+If xAI shows a page that says "Enter this code to finish signing in" / "Copy the code below into Grok Build", copy that code and call `auth_exchange_code`:
+
+```json
+{
+  "code": "paste-the-grok-build-code-here"
+}
+```
+
+If you have a full callback URL instead, pass it as `callback_url`:
+
+```json
+{
+  "callback_url": "http://127.0.0.1:56121/callback?code=...&state=..."
+}
+```
+
+Run `auth_login` again if the pending OAuth state is missing or expired.
 
 OAuth details:
 
@@ -110,6 +128,26 @@ Input:
 ```
 
 Set `wait=true` only for clients that can show stderr or otherwise surface the URL while the tool is still running.
+
+### `auth_exchange_code`
+
+Exchanges a pasted xAI/Grok Build OAuth code, or a full callback URL, using pending PKCE state from the last `auth_login` call.
+
+Input with a bare Grok Build code:
+
+```json
+{
+  "code": "paste-the-grok-build-code-here"
+}
+```
+
+Input with a callback URL:
+
+```json
+{
+  "callback_url": "http://127.0.0.1:56121/callback?code=...&state=..."
+}
+```
 
 ### `auth_status`
 
