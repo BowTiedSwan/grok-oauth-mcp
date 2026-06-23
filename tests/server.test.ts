@@ -12,6 +12,7 @@ function parseResult(result: CallToolResult): unknown {
 describe("MCP tool surface", () => {
   it("exposes the required Hermes Grok MCP tools", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "auth_exchange_code",
       "auth_login",
       "auth_logout",
       "auth_status",
@@ -28,7 +29,8 @@ describe("MCP tool surface", () => {
     const auth = {
       startLogin: vi.fn(async () => ({ auth_url: "https://accounts.x.ai/authorize" })),
       status: vi.fn(async () => ({ authenticated: true })),
-      logout: vi.fn(async () => ({ authenticated: false }))
+      logout: vi.fn(async () => ({ authenticated: false })),
+      exchangePendingCode: vi.fn(async () => ({ authenticated: true }))
     };
     const xai = {
       chat: vi.fn(async () => ({ output_text: "hello" })),
@@ -40,10 +42,13 @@ describe("MCP tool surface", () => {
     };
 
     const login = await handleToolCall("auth_login", { wait: false }, { auth: auth as never, xai: xai as never });
+    const exchange = await handleToolCall("auth_exchange_code", { code: "manual-code" }, { auth: auth as never, xai: xai as never });
     const chat = await handleToolCall("grok_chat", { input: "hello" }, { auth: auth as never, xai: xai as never });
 
     expect(parseResult(login)).toMatchObject({ auth_url: "https://accounts.x.ai/authorize" });
+    expect(parseResult(exchange)).toMatchObject({ authenticated: true });
     expect(parseResult(chat)).toMatchObject({ output_text: "hello" });
+    expect(auth.exchangePendingCode).toHaveBeenCalledWith({ code: "manual-code" });
     expect(xai.chat).toHaveBeenCalledWith({ input: "hello" });
   });
 

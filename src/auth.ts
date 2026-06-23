@@ -24,6 +24,10 @@ export function tokenPath(): string {
   return join(configDir(), "tokens.json");
 }
 
+export function pendingOAuthPath(): string {
+  return join(configDir(), "pending_oauth.json");
+}
+
 function base64Url(input: Buffer): string {
   return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -32,6 +36,18 @@ export function createPkcePair(): { verifier: string; challenge: string } {
   const verifier = base64Url(randomBytes(64));
   const challenge = base64Url(createHash("sha256").update(verifier).digest());
   return { verifier, challenge };
+}
+
+export interface PendingOAuthState {
+  state: string;
+  nonce: string;
+  code_verifier: string;
+  code_challenge: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  redirect_uri: string;
+  created_at: number;
+  expires_at: number;
 }
 
 export class TokenStore {
@@ -64,6 +80,36 @@ export class TokenStore {
   }
 }
 
+export class PendingOAuthStore {
+  constructor(private readonly path = pendingOAuthPath()) {}
+
+  get filePath(): string {
+    return this.path;
+  }
+
+  async read(): Promise<PendingOAuthState | null> {
+    try {
+      return JSON.parse(await readFile(this.path, "utf8")) as PendingOAuthState;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  async write(state: PendingOAuthState): Promise<void> {
+    await mkdir(dirname(this.path), { recursive: true });
+    await writeFile(this.path, JSON.stringify(state, null, 2), { mode: 0o600 });
+    try {
+      await chmod(this.path, 0o600);
+    } catch {
+    }
+  }
+
+  async clear(): Promise<void> {
+    await rm(this.path, { force: true });
+  }
+}
+
 export class OAuthError extends Error {
   constructor(message: string, readonly causeBody?: unknown) {
     super(message);
@@ -73,11 +119,15 @@ export class OAuthError extends Error {
 
 export class AuthClient {
   private pendingLogin: Promise<void> | null = null;
+  private readonly pendingStore: PendingOAuthStore;
 
   constructor(
     private readonly store = new TokenStore(),
-    private readonly fetchImpl: FetchLike = fetch
-  ) {}
+    private readonly fetchImpl: FetchLike = fetch,
+    pendingStore?: PendingOAuthStore
+  ) {
+    this.pendingStore = pendingStore ?? new PendingOAuthStore(join(dirname(store.filePath), "pending_oauth.json"));
+  }
 
   async discovery(): Promise<OAuthDiscovery> {
     const response = await this.fetchImpl(OAUTH_DISCOVERY_URL);
@@ -110,11 +160,23 @@ export class AuthClient {
     const nonce = randomUUID();
     const pkce = createPkcePair();
     const authUrl = this.buildAuthorizeUrl(discovery, state, pkce.challenge, nonce);
+    await this.pendingStore.write({
+      state,
+      nonce,
+      code_verifier: pkce.verifier,
+      code_challenge: pkce.challenge,
+      authorization_endpoint: discovery.authorization_endpoint,
+      token_endpoint: discovery.token_endpoint,
+      redirect_uri: OAUTH_REDIRECT_URI,
+      created_at: Date.now(),
+      expires_at: Date.now() + (options.timeoutMs ?? 300_000)
+    });
     if (!options.wait) {
       this.pendingLogin = waitForCallback(state, options.timeoutMs ?? 300_000)
         .then(async (code) => {
           const tokens = await this.exchangeCode(discovery, code, pkce.verifier, pkce.challenge);
           await this.store.write(tokens);
+          await this.pendingStore.clear();
         })
         .finally(() => {
           this.pendingLogin = null;
@@ -128,7 +190,27 @@ export class AuthClient {
     const code = await waitForCallback(state, options.timeoutMs ?? 120_000);
     const tokens = await this.exchangeCode(discovery, code, pkce.verifier, pkce.challenge);
     await this.store.write(tokens);
+    await this.pendingStore.clear();
     return { authenticated: true, token_path: this.store.filePath, expires_at: tokens.expires_at };
+  }
+
+  async exchangePendingCode(args: { code?: unknown; callback_url?: unknown; callbackUrl?: unknown }): Promise<Record<string, unknown>> {
+    const pending = await this.pendingStore.read();
+    if (!pending) throw new OAuthError("No pending OAuth login found. Run auth_login first.");
+    if (pending.expires_at <= Date.now()) {
+      throw new OAuthError("Pending OAuth login is expired. Run auth_login again.");
+    }
+
+    const code = parseManualCode(args, pending.state);
+    const tokens = await this.exchangeCode(
+      { authorization_endpoint: pending.authorization_endpoint, token_endpoint: pending.token_endpoint },
+      code,
+      pending.code_verifier,
+      pending.code_challenge
+    );
+    await this.store.write(tokens);
+    await this.pendingStore.clear();
+    return { authenticated: true, token_path: this.store.filePath, expires_at: tokens.expires_at, pending_cleared: true };
   }
 
   async exchangeCode(discovery: OAuthDiscovery, code: string, verifier: string, challenge: string): Promise<TokenSet> {
@@ -173,6 +255,7 @@ export class AuthClient {
 
   async logout(): Promise<Record<string, unknown>> {
     await this.store.clear();
+    await this.pendingStore.clear();
     return { authenticated: false, token_path: this.store.filePath };
   }
 
@@ -211,6 +294,33 @@ async function readResponse(response: Response): Promise<unknown> {
   }
 }
 
+function parseManualCode(args: { code?: unknown; callback_url?: unknown; callbackUrl?: unknown }, expectedState: string): string {
+  const callbackUrl = stringArg(args.callback_url) ?? stringArg(args.callbackUrl);
+  if (callbackUrl) {
+    let url: URL;
+    try {
+      url = new URL(callbackUrl);
+    } catch {
+      throw new OAuthError("callback_url is not a valid URL");
+    }
+    const error = url.searchParams.get("error");
+    if (error) throw new OAuthError(`OAuth callback returned error: ${error}`);
+    const state = url.searchParams.get("state");
+    if (state !== expectedState) throw new OAuthError("OAuth callback state mismatch");
+    const code = url.searchParams.get("code");
+    if (!code) throw new OAuthError("OAuth callback URL is missing code");
+    return code;
+  }
+
+  const code = stringArg(args.code);
+  if (!code) throw new OAuthError("Provide code or callback_url from the xAI OAuth page");
+  return code;
+}
+
+function stringArg(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 function waitForCallback(expectedState: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const server = createServer((request, response) => {
@@ -229,9 +339,7 @@ function waitForCallback(expectedState: string, timeoutMs: number): Promise<stri
         return;
       }
       if (!code || state !== expectedState) {
-        response.writeHead(400).end("Invalid OAuth callback");
-        cleanup();
-        reject(new OAuthError("OAuth callback state mismatch or missing code"));
+        response.writeHead(400).end("Invalid OAuth callback. If xAI showed a Grok Build code, use auth_exchange_code with that code.");
         return;
       }
       response.writeHead(200, { "content-type": "text/plain" }).end("xAI login complete. You can close this tab.");

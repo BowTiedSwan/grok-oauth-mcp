@@ -2,7 +2,7 @@ import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { AuthClient, TokenStore, configDir, createPkcePair } from "../src/auth.js";
+import { AuthClient, PendingOAuthStore, TokenStore, configDir, createPkcePair } from "../src/auth.js";
 import { OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_SCOPE } from "../src/constants.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -76,6 +76,61 @@ describe("AuthClient", () => {
     expect(result.auth_url).toEqual(expect.stringContaining("https://accounts.x.ai/authorize"));
     expect(result.callback_server).toBe("listening");
     await vi.waitFor(async () => expect((await store.read())?.access_token).toBe("captured"));
+  });
+
+  it("persists pending OAuth state for manual code exchange", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "grok-oauth-mcp-"));
+    const store = new TokenStore(join(dir, "tokens.json"));
+    const pendingStore = new PendingOAuthStore(join(dir, "pending_oauth.json"));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ authorization_endpoint: "https://accounts.x.ai/authorize", token_endpoint: "https://auth.x.ai/token" }));
+    const auth = new AuthClient(store, fetchMock as typeof fetch, pendingStore);
+
+    const result = await auth.startLogin({ timeoutMs: 60_000 });
+    const pending = await pendingStore.read();
+
+    expect(result.callback_server).toBe("listening");
+    expect(pending).toMatchObject({
+      state: new URL(String(result.auth_url)).searchParams.get("state"),
+      token_endpoint: "https://auth.x.ai/token",
+      redirect_uri: OAUTH_REDIRECT_URI
+    });
+    expect(pending?.code_verifier).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(pending?.code_challenge).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("exchanges a bare Grok Build code using pending OAuth PKCE", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "grok-oauth-mcp-"));
+    const store = new TokenStore(join(dir, "tokens.json"));
+    const pendingStore = new PendingOAuthStore(join(dir, "pending_oauth.json"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ authorization_endpoint: "https://accounts.x.ai/authorize", token_endpoint: "https://auth.x.ai/token" }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "manual", refresh_token: "refresh", expires_in: 3600 }));
+    const auth = new AuthClient(store, fetchMock as typeof fetch, pendingStore);
+
+    await auth.startLogin({ timeoutMs: 60_000 });
+    const result = await auth.exchangePendingCode({ code: "manual-code" });
+    const body = fetchCall(fetchMock, 1)[1].body as URLSearchParams;
+
+    expect(result).toMatchObject({ authenticated: true, pending_cleared: true });
+    expect(body.get("code")).toBe("manual-code");
+    expect(body.get("code_verifier")).toMatch(/^[A-Za-z0-9_-]+$/);
+    await expect(store.read()).resolves.toMatchObject({ access_token: "manual" });
+    await expect(pendingStore.read()).resolves.toBeNull();
+  });
+
+  it("validates state when exchanging a pasted callback URL", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "grok-oauth-mcp-"));
+    const store = new TokenStore(join(dir, "tokens.json"));
+    const pendingStore = new PendingOAuthStore(join(dir, "pending_oauth.json"));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ authorization_endpoint: "https://accounts.x.ai/authorize", token_endpoint: "https://auth.x.ai/token" }));
+    const auth = new AuthClient(store, fetchMock as typeof fetch, pendingStore);
+
+    const login = await auth.startLogin({ timeoutMs: 60_000 });
+    const state = new URL(String(login.auth_url)).searchParams.get("state");
+
+    await expect(auth.exchangePendingCode({ callback_url: `http://127.0.0.1:56121/callback?code=manual-code&state=wrong` })).rejects.toThrow("state mismatch");
+    expect((await pendingStore.read())?.state).toBe(state);
   });
 
   it("refreshes expired access tokens before use", async () => {

@@ -12,6 +12,17 @@ export const tools: Tool[] = [
       }
     }
   },
+  {
+    name: "auth_exchange_code",
+    description: "Exchange a pasted xAI/Grok Build OAuth code or callback URL using pending PKCE state from auth_login.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Bare code shown by the xAI page that says to copy it into Grok Build." },
+        callback_url: { type: "string", description: "Full localhost callback URL containing code and state." }
+      }
+    }
+  },
   { name: "auth_status", description: "Show local xAI OAuth token status without revealing token values.", inputSchema: { type: "object", properties: {} } },
   { name: "auth_logout", description: "Delete the local OAuth token store.", inputSchema: { type: "object", properties: {} } },
   {
