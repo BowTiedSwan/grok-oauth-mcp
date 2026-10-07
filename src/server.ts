@@ -39,6 +39,8 @@ export async function handleToolCall(name: string, args: JsonObject, dependencie
         return jsonResult(await auth.startLogin({ wait: args.wait === true, timeoutMs: numberArg(args.timeout_ms) }));
       case "auth_status":
         return jsonResult(await auth.status());
+      case "auth_refresh":
+        return jsonResult(await auth.ensureFresh(numberArg(args.min_validity_seconds)));
       case "auth_exchange_code":
         return jsonResult(await auth.exchangePendingCode(args));
       case "auth_logout":

@@ -259,6 +259,10 @@ Input with a callback URL:
 
 Reports whether a token is stored, whether a refresh token exists, and approximate expiry. Token values are never returned.
 
+### `auth_refresh`
+
+Refreshes the stored token when it expires within `min_validity_seconds` (default 900) and returns the same status as `auth_status` plus `refreshed: true|false`. Use it as a preflight before long jobs so a token never expires mid-run. Token values are never returned.
+
 ### `auth_logout`
 
 Deletes the local token file and any pending OAuth state.

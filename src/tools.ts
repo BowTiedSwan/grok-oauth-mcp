@@ -24,6 +24,11 @@ export const tools: Tool[] = [
     }
   },
   { name: "auth_status", description: "Show local xAI OAuth token status without revealing token values.", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "auth_refresh",
+    description: "Refresh the stored xAI OAuth token when it expires within min_validity_seconds (default 900). Returns status plus refreshed: true|false; token values are never returned.",
+    inputSchema: { type: "object", properties: { min_validity_seconds: { type: "number", description: "Refresh when the token expires within this many seconds." } } }
+  },
   { name: "auth_logout", description: "Delete the local OAuth token store.", inputSchema: { type: "object", properties: {} } },
   {
     name: "grok_chat",

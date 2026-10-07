@@ -152,6 +152,22 @@ describe("AuthClient", () => {
     await expect(store.read()).resolves.toMatchObject({ access_token: "new", refresh_token: "refresh" });
   });
 
+  it("auth_refresh refreshes tokens close to expiry and leaves fresh ones alone", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "grok-oauth-mcp-"));
+    const store = new TokenStore(join(dir, "tokens.json"));
+    await store.write({ access_token: "old", refresh_token: "refresh", expires_at: Date.now() + 60_000 });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ authorization_endpoint: "https://accounts.x.ai/authorize", token_endpoint: "https://auth.x.ai/token" }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "new", expires_in: 3600 }));
+    const auth = new AuthClient(store, fetchMock as typeof fetch);
+
+    await expect(auth.ensureFresh(900)).resolves.toMatchObject({ authenticated: true, refreshed: true });
+    await expect(store.read()).resolves.toMatchObject({ access_token: "new", refresh_token: "refresh" });
+    await expect(auth.ensureFresh(900)).resolves.toMatchObject({ refreshed: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("stores tokens with owner-only permissions where supported", async () => {
     const dir = await mkdtemp(join(tmpdir(), "grok-oauth-mcp-"));
     const path = join(dir, "tokens.json");

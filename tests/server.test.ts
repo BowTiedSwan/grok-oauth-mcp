@@ -15,6 +15,7 @@ describe("MCP tool surface", () => {
       "auth_exchange_code",
       "auth_login",
       "auth_logout",
+      "auth_refresh",
       "auth_status",
       "grok_chat",
       "grok_image",

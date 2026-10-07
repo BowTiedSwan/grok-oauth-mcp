@@ -240,6 +240,16 @@ export class AuthClient {
     return merged;
   }
 
+  async ensureFresh(minValiditySeconds = 900): Promise<Record<string, unknown>> {
+    const tokens = await this.store.read();
+    if (!tokens?.access_token) throw new OAuthError("Not authenticated. Run auth_login first.");
+    const expiresAt = tokens.expires_at ?? 0;
+    const refreshed = Boolean(tokens.refresh_token && expiresAt <= Date.now() + minValiditySeconds * 1000);
+    if (refreshed) await this.refresh(tokens);
+    else if (expiresAt && expiresAt <= Date.now()) throw new OAuthError("Access token is expired and no refresh_token is available. Run auth_login again.");
+    return { ...(await this.status()), refreshed };
+  }
+
   async status(): Promise<Record<string, unknown>> {
     const tokens = await this.store.read();
     if (!tokens) return { authenticated: false, token_path: this.store.filePath };
